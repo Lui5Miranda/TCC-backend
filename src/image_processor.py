@@ -1,0 +1,257 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Módulo de processamento de imagens de gabaritos
+Contém as funções principais para análise e extração de respostas
+"""
+
+import cv2
+import numpy as np
+from imutils import contours
+import logging
+from config import IMAGE_PROCESSING_CONFIG
+
+logger = logging.getLogger(__name__)
+
+def order_points(pts):
+    """
+    Ordena os pontos em ordem: top-left, top-right, bottom-right, bottom-left
+    """
+    rect = np.zeros((4, 2), dtype="float32")
+    s = pts.sum(axis=1)
+    rect[0] = pts[np.argmin(s)]; rect[2] = pts[np.argmax(s)]
+    diff = np.diff(pts, axis=1)
+    rect[1] = pts[np.argmin(diff)]; rect[3] = pts[np.argmax(diff)]
+    return rect
+
+def four_point_transform(image, pts):
+    """
+    Aplica transformação de perspectiva usando 4 pontos
+    """
+    rect = order_points(pts)
+    (tl, tr, br, bl) = rect
+    widthA = np.linalg.norm(br - bl); widthB = np.linalg.norm(tr - tl)
+    maxWidth = max(int(widthA), int(widthB))
+    heightA = np.linalg.norm(tr - br); heightB = np.linalg.norm(tl - bl)
+    maxHeight = max(int(heightA), int(heightB))
+    dst = np.array([[0, 0], [maxWidth - 1, 0], [maxWidth - 1, maxHeight - 1], [0, maxHeight - 1]], dtype="float32")
+    M = cv2.getPerspectiveTransform(rect, dst)
+    warped = cv2.warpPerspective(image, M, (maxWidth, maxHeight))
+    return warped
+
+def detect_markers(image):
+    """
+    Detecta marcadores de alinhamento na imagem
+    """
+    config = IMAGE_PROCESSING_CONFIG['alignment']
+    
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, config['blur_kernel'], 0)
+    thresh_align = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)[1]
+    cnts, _ = cv2.findContours(thresh_align.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    marker_contours = []
+    for c in cnts:
+        area = cv2.contourArea(c)
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.04 * peri, True)
+        
+        if len(approx) == 4 and area > config['min_marker_area']:
+            (x, y, w, h) = cv2.boundingRect(approx)
+            aspect_ratio = w / float(h)
+            if config['marker_aspect_ratio'][0] <= aspect_ratio <= config['marker_aspect_ratio'][1]:
+                marker_contours.append(approx)
+    
+    if len(marker_contours) < config['min_markers']:
+        raise Exception(f"Erro Crítico: Encontrados apenas {len(marker_contours)} marcadores.")
+    
+    if len(marker_contours) > config['max_markers']:
+        marker_contours = sorted(marker_contours, key=cv2.contourArea, reverse=True)[:config['max_markers']]
+    
+    return marker_contours
+
+def get_marker_points(marker_contours):
+    """
+    Extrai pontos centrais dos marcadores
+    """
+    points = []
+    for c in marker_contours:
+        M = cv2.moments(c)
+        if M["m00"] != 0:
+            points.append((int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"])))
+        else:
+            (x, y, w, h) = cv2.boundingRect(c)
+            points.append((x + w // 2, y + h // 2))
+    
+    # Se encontrou apenas 3 marcadores, estima o 4º
+    if len(points) == 3:
+        logger.warning("Encontrados 3 marcadores. Estimando a posição do 4º.")
+        P = np.array(points, dtype=np.float32)
+        dists = [np.linalg.norm(P[i] - P[(i+1)%3]) + np.linalg.norm(P[i] - P[(i+2)%3]) for i in range(3)]
+        p_center_idx = np.argmin(dists)
+        p_others_idx = [i for i in range(3) if i != p_center_idx]
+        missing_point = P[p_others_idx[0]] - P[p_center_idx] + P[p_others_idx[1]]
+        points.append(tuple(missing_point.astype(int)))
+    
+    return points
+
+def align_image(image):
+    """
+    Alinha a imagem usando os marcadores detectados
+    """
+    logger.info("Detectando marcadores de alinhamento")
+    marker_contours = detect_markers(image)
+    
+    logger.info("Extraindo pontos dos marcadores")
+    points = get_marker_points(marker_contours)
+    
+    logger.info("Aplicando transformação de perspectiva")
+    screenCnt = np.array(points, dtype="float32")
+    paper_aligned = four_point_transform(image, screenCnt)
+    
+    return paper_aligned
+
+def detect_bubbles(aligned_image):
+    """
+    Detecta bolhas de resposta na imagem alinhada
+    """
+    config = IMAGE_PROCESSING_CONFIG['bubble_detection']
+    
+    warped_gray = cv2.cvtColor(aligned_image, cv2.COLOR_BGR2GRAY)
+    thresh = cv2.adaptiveThreshold(
+        warped_gray, 
+        config['adaptive_threshold']['max_value'],
+        getattr(cv2, config['adaptive_threshold']['method']),
+        getattr(cv2, config['adaptive_threshold']['threshold_type']),
+        config['adaptive_threshold']['block_size'],
+        config['adaptive_threshold']['c']
+    )
+    
+    cnts, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    
+    question_cnts = []
+    for c in cnts:
+        (x, y, w, h) = cv2.boundingRect(c)
+        ar = w / float(h)
+        if (w >= config['min_size'] and h >= config['min_size'] and 
+            config['aspect_ratio'][0] <= ar <= config['aspect_ratio'][1]):
+            question_cnts.append(c)
+    
+    logger.info(f"Encontradas {len(question_cnts)} bolhas potenciais")
+    
+    if len(question_cnts) >= config['expected_count']:
+        question_cnts = sorted(question_cnts, key=cv2.contourArea, reverse=True)[:config['expected_count']]
+        logger.info(f"Ruído removido. Restaram {len(question_cnts)} bolhas.")
+    
+    if len(question_cnts) != config['expected_count']:
+        raise Exception(f"Não foi possível isolar as {config['expected_count']} bolhas. Encontradas: {len(question_cnts)}.")
+    
+    return question_cnts, thresh
+
+def sort_bubbles_by_columns(bubbles):
+    """
+    Ordena as bolhas por colunas (esquerda para direita, cima para baixo)
+    """
+    (question_cnts, _) = contours.sort_contours(bubbles, method="left-to-right")
+    
+    sorted_cnts = []
+    chunk_size = 75
+    for i in range(0, len(question_cnts), chunk_size):
+        chunk = question_cnts[i:i + chunk_size]
+        (coluna_ordenada, _) = contours.sort_contours(chunk, method="top-to-bottom")
+        sorted_cnts.extend(coluna_ordenada)
+        if i + chunk_size >= 150:
+            chunk_size = 50
+    
+    logger.info("Bolhas ordenadas com sucesso por colunas")
+    return sorted_cnts
+
+def extract_answers(sorted_bubbles, thresh_image, aligned_image):
+    """
+    Extrai as respostas marcadas das bolhas ordenadas
+    """
+    config = IMAGE_PROCESSING_CONFIG['scoring']
+    alternativas = {0: "A", 1: "B", 2: "C", 3: "D", 4: "E"}
+    respostas_marcadas = {}
+    
+    # Prepara a imagem para o resultado visual final
+    resultado_visual_img = aligned_image.copy()
+    
+    logger.info(f"Processando {len(sorted_bubbles)} bolhas em grupos de 5")
+    
+    for (q, i) in enumerate(np.arange(0, len(sorted_bubbles), 5)):
+        cnts_por_questao = contours.sort_contours(sorted_bubbles[i:i + 5])[0]
+        
+        pontuacoes = []
+        for (j, c) in enumerate(cnts_por_questao):
+            mask = np.zeros(thresh_image.shape, dtype="uint8")
+            cv2.drawContours(mask, [c], -1, 255, -1)
+            mask = cv2.bitwise_and(thresh_image, thresh_image, mask=mask)
+            total = cv2.countNonZero(mask)
+            pontuacoes.append(total)
+        
+        # Log de debug para as primeiras 3 questões
+        if q < 3:
+            logger.info(f"Questão {q + 1} - Pontuações: {pontuacoes}")
+            logger.info(f"Questão {q + 1} - Alternativas: {[alternativas[j] for j in range(len(pontuacoes))]}")
+        
+        sorted_scores = sorted(pontuacoes, reverse=True)
+        if (len(sorted_scores) > 1 and 
+            sorted_scores[0] > (sorted_scores[1] * config['confidence_threshold'])):
+            
+            indice_marcado = pontuacoes.index(sorted_scores[0])
+            resposta = alternativas[indice_marcado]
+            respostas_marcadas[q + 1] = resposta
+            
+            # Log de debug para as primeiras 3 questões
+            if q < 3:
+                logger.info(f"Questão {q + 1} - Resposta detectada: {resposta} (índice {indice_marcado})")
+            
+            # Desenha o círculo na resposta escolhida
+            (x, y, w, h) = cv2.boundingRect(cnts_por_questao[indice_marcado])
+            centro_x = x + w // 2
+            centro_y = y + h // 2
+            raio = w // 2
+            cv2.circle(resultado_visual_img, (centro_x, centro_y), raio, (255, 255, 0), 2)
+        else:
+            respostas_marcadas[q + 1] = "DUVIDA / NULA"
+            if q < 3:
+                logger.info(f"Questão {q + 1} - Resposta não detectada (confiança baixa)")
+    
+    logger.info(f"Respostas extraídas: {dict(list(respostas_marcadas.items())[:5])}")
+    return respostas_marcadas, resultado_visual_img
+
+def process_gabarito_image(image):
+    """
+    Processa uma imagem de gabarito completa
+    """
+    try:
+        logger.info("Iniciando processamento de gabarito")
+        
+        # Alinha a imagem
+        aligned_image = align_image(image)
+        
+        # Detecta bolhas
+        bubbles, thresh = detect_bubbles(aligned_image)
+        
+        # Ordena bolhas por colunas
+        sorted_bubbles = sort_bubbles_by_columns(bubbles)
+        
+        # Extrai respostas
+        answers, result_image = extract_answers(sorted_bubbles, thresh, aligned_image)
+        
+        logger.info(f"Processamento concluído: {len(answers)} questões detectadas")
+        
+        return {
+            'success': True,
+            'answers': answers,
+            'result_image': result_image,
+            'total_questions': len(answers)
+        }
+        
+    except Exception as e:
+        logger.error(f"Erro no processamento: {str(e)}")
+        return {
+            'success': False,
+            'error': str(e)
+        }
