@@ -111,11 +111,17 @@ def align_image(image):
     
     return paper_aligned
 
-def detect_bubbles(aligned_image):
+def detect_bubbles(aligned_image, num_questions=None):
     """
     Detecta bolhas de resposta na imagem alinhada
     """
     config = IMAGE_PROCESSING_CONFIG['bubble_detection']
+    
+    # Determina o número esperado de bolhas
+    expected_count = config['expected_count']
+    if num_questions:
+        expected_count = num_questions * 5
+        logger.info(f"Usando número dinâmico de bolhas: {expected_count} ({num_questions} questões * 5)")
     
     warped_gray = cv2.cvtColor(aligned_image, cv2.COLOR_BGR2GRAY)
     thresh = cv2.adaptiveThreshold(
@@ -139,12 +145,16 @@ def detect_bubbles(aligned_image):
     
     logger.info(f"Encontradas {len(question_cnts)} bolhas potenciais")
     
-    if len(question_cnts) >= config['expected_count']:
-        question_cnts = sorted(question_cnts, key=cv2.contourArea, reverse=True)[:config['expected_count']]
+    if len(question_cnts) >= expected_count:
+        question_cnts = sorted(question_cnts, key=cv2.contourArea, reverse=True)[:expected_count]
         logger.info(f"Ruído removido. Restaram {len(question_cnts)} bolhas.")
     
-    if len(question_cnts) != config['expected_count']:
-        raise Exception(f"Não foi possível isolar as {config['expected_count']} bolhas. Encontradas: {len(question_cnts)}.")
+    if len(question_cnts) != expected_count:
+        # Se não encontrou o número exato, mas encontrou algo próximo e múltiplo de 5, tenta prosseguir
+        if num_questions and len(question_cnts) > 0 and len(question_cnts) % 5 == 0:
+             logger.warning(f"Número de bolhas ({len(question_cnts)}) diferente do esperado ({expected_count}), mas é múltiplo de 5. Tentando processar.")
+        else:
+             raise Exception(f"Não foi possível isolar as {expected_count} bolhas. Encontradas: {len(question_cnts)}.")
     
     return question_cnts, thresh
 
@@ -221,18 +231,18 @@ def extract_answers(sorted_bubbles, thresh_image, aligned_image):
     logger.info(f"Respostas extraídas: {dict(list(respostas_marcadas.items())[:5])}")
     return respostas_marcadas, resultado_visual_img
 
-def process_gabarito_image(image):
+def process_gabarito_image(image, num_questions=None):
     """
     Processa uma imagem de gabarito completa
     """
     try:
-        logger.info("Iniciando processamento de gabarito")
+        logger.info(f"Iniciando processamento de gabarito (Questões esperadas: {num_questions if num_questions else 'Padrão'})")
         
         # Alinha a imagem
         aligned_image = align_image(image)
         
         # Detecta bolhas
-        bubbles, thresh = detect_bubbles(aligned_image)
+        bubbles, thresh = detect_bubbles(aligned_image, num_questions)
         
         # Ordena bolhas por colunas
         sorted_bubbles = sort_bubbles_by_columns(bubbles)

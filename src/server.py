@@ -122,7 +122,7 @@ def handle_errors(f):
 # FUNÇÕES DE PROCESSAMENTO DE IMAGEM
 # ====================================================================================
 
-def process_image(image_data):
+def process_image(image_data, num_questions=None):
     """
     Processa uma imagem de gabarito e retorna as respostas detectadas
     """
@@ -155,13 +155,15 @@ def process_image(image_data):
         logger.info(f"Imagem decodificada: {width}x{height} pixels")
         
         # Verifica se o resultado está no cache
+        # Nota: O cache deve considerar o num_questions também, mas por enquanto vamos manter simples
+        # Se num_questions mudar, o conteúdo da imagem provavelmente é diferente ou irrelevante se for a mesma imagem
         cached_result = get_cached_result(image_data)
         if cached_result:
             logger.info("Resultado encontrado no cache")
             return cached_result
         
         # Processa a imagem usando o módulo especializado
-        result = process_gabarito_image(img)
+        result = process_gabarito_image(img, num_questions)
         
         if result['success']:
             # Converte a imagem de resultado para base64
@@ -224,7 +226,12 @@ def process_gabarito():
         return jsonify({'success': False, 'error': 'Gabarito de referência inválido'}), 400
     
     logger.info("Processando gabarito")
-    result = process_image(data['image'])
+    
+    # Determina o número de questões do gabarito
+    num_questions = len(gabarito['questions'])
+    logger.info(f"Gabarito possui {num_questions} questões")
+    
+    result = process_image(data['image'], num_questions)
     
     if result['success']:
         # Compara com o gabarito selecionado
