@@ -11,13 +11,13 @@ class Config:
     """Configuração base"""
     
     # Configurações de segurança
-    MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
+    MAX_CONTENT_LENGTH = 64 * 1024 * 1024  # 64MB
     ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'tiff'}
     CORS_ORIGINS = ["http://localhost:3000", "http://127.0.0.1:3000"]
     
     # Configurações de processamento de imagem
     MIN_IMAGE_SIZE = (100, 100)
-    MAX_IMAGE_SIZE = (4000, 4000)
+    MAX_IMAGE_SIZE = (8000, 8000)
     EXPECTED_BUBBLES = 200
     MIN_BUBBLE_SIZE = 18
     ASPECT_RATIO_RANGE = (0.8, 1.2)
