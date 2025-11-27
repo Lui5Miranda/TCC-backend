@@ -189,15 +189,6 @@ def extract_answers(sorted_bubbles, thresh_image, aligned_image):
     
     logger.info(f"Processando {len(sorted_bubbles)} bolhas em grupos de 5")
     
-    # Primeiro, desenha TODAS as bolhas em cinza (referência)
-    for bubble in sorted_bubbles:
-        (x, y, w, h) = cv2.boundingRect(bubble)
-        centro_x = x + w // 2
-        centro_y = y + h // 2
-        raio = max(w, h) // 2
-        # Círculo cinza fino para todas as bolhas
-        cv2.circle(resultado_visual_img, (centro_x, centro_y), raio, (128, 128, 128), 1)
-    
     for (q, i) in enumerate(np.arange(0, len(sorted_bubbles), 5)):
         cnts_por_questao = contours.sort_contours(sorted_bubbles[i:i + 5])[0]
         
@@ -226,17 +217,32 @@ def extract_answers(sorted_bubbles, thresh_image, aligned_image):
             
             logger.info(f"Questão {q + 1} - Resposta detectada: {resposta} (pontuação: {sorted_scores[0]} vs {sorted_scores[1]}, ratio: {sorted_scores[0]/sorted_scores[1]:.2f})")
             
-            # Desenha círculo CIANO (azul claro) GROSSO na resposta detectada
-            (x, y, w, h) = cv2.boundingRect(cnts_por_questao[indice_marcado])
-            centro_x = x + w // 2
-            centro_y = y + h // 2
-            raio = max(w, h) // 2
-            # Cor CIANO (0, 255, 255) em BGR = azul claro brilhante
-            cv2.circle(resultado_visual_img, (centro_x, centro_y), raio, (0, 255, 255), 3)
+            # Desenha TODAS as bolhas da questão
+            for (j, c) in enumerate(cnts_por_questao):
+                (x, y, w, h) = cv2.boundingRect(c)
+                centro_x = x + w // 2
+                centro_y = y + h // 2
+                raio = max(w, h) // 2
+                
+                if j == indice_marcado:
+                    # 🟡 AMARELO para bolha MARCADA - BGR: (0, 255, 255)
+                    cv2.circle(resultado_visual_img, (centro_x, centro_y), raio, (0, 255, 255), 3)
+                else:
+                    # 🟢 VERDE para bolhas NÃO MARCADAS - BGR: (0, 255, 0)
+                    cv2.circle(resultado_visual_img, (centro_x, centro_y), raio, (0, 255, 0), 2)
         else:
             resposta = "NÃO MARCADA"
             ratio = sorted_scores[0]/sorted_scores[1] if sorted_scores[1] > 0 else float('inf')
             logger.info(f"Questão {q + 1} - Não detectada (confiança baixa: {sorted_scores[0]} vs {sorted_scores[1]}, ratio: {ratio:.2f})")
+            
+            # Desenha TODAS as bolhas em VERDE (nenhuma foi detectada como marcada)
+            for c in cnts_por_questao:
+                (x, y, w, h) = cv2.boundingRect(c)
+                centro_x = x + w // 2
+                centro_y = y + h // 2
+                raio = max(w, h) // 2
+                # 🟢 VERDE para todas - BGR: (0, 255, 0)
+                cv2.circle(resultado_visual_img, (centro_x, centro_y), raio, (0, 255, 0), 2)
         
         # SEMPRE registra a resposta na ordem correta
         respostas_marcadas[q + 1] = resposta
