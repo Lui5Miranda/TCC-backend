@@ -123,7 +123,19 @@ def detect_bubbles(aligned_image, num_questions=None):
         expected_count = num_questions * 5
         logger.info(f"Usando número dinâmico de bolhas: {expected_count} ({num_questions} questões * 5)")
     
+    # Converte para escala de cinza
     warped_gray = cv2.cvtColor(aligned_image, cv2.COLOR_BGR2GRAY)
+    
+    # MELHORIA 1: Aplica CLAHE para normalizar iluminação
+    # CLAHE = Contrast Limited Adaptive Histogram Equalization
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    warped_gray = clahe.apply(warped_gray)
+    logger.info("CLAHE aplicado para normalização de iluminação")
+    
+    # MELHORIA 2: Aplica GaussianBlur para reduzir ruído
+    warped_gray = cv2.GaussianBlur(warped_gray, (5, 5), 0)
+    
+    # Threshold adaptativo
     thresh = cv2.adaptiveThreshold(
         warped_gray, 
         config['adaptive_threshold']['max_value'],
@@ -132,6 +144,12 @@ def detect_bubbles(aligned_image, num_questions=None):
         config['adaptive_threshold']['block_size'],
         config['adaptive_threshold']['c']
     )
+    
+    # MELHORIA 3: Morfologia para limpar ruído
+    kernel = np.ones((3,3), np.uint8)
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
+    logger.info("Operações morfológicas aplicadas")
     
     cnts, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     
@@ -188,8 +206,9 @@ def extract_answers(sorted_bubbles, thresh_image, aligned_image):
     # Prepara a imagem para o resultado visual final
     resultado_visual_img = aligned_image.copy()
     
-    # THRESHOLD DE PREENCHIMENTO: Se bolha tem >30% de pixels pretos, está marcada
-    FILL_THRESHOLD = 0.30  # 30% preenchido = marcado
+    # THRESHOLD DE PREENCHIMENTO: Se bolha tem >45% de pixels pretos, está marcada
+    # Aumentado de 30% para 45% para reduzir falsos positivos
+    FILL_THRESHOLD = 0.45  # 45% preenchido = marcado
     
     logger.info(f"Processando {len(sorted_bubbles)} bolhas em grupos de 5")
     logger.info(f"Usando threshold de preenchimento: {FILL_THRESHOLD*100}%")
