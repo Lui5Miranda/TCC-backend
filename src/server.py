@@ -21,7 +21,7 @@ from functools import wraps
 from config import get_config, IMAGE_PROCESSING_CONFIG, VALIDATION_RULES
 from image_processor import process_gabarito_image
 from cache_manager import get_cached_result, cache_result, get_cache_stats
-from gabarito_generator_v2 import generate_standard_gabarito_v2
+from gabarito_generator import generate_standard_gabarito
 
 # Carrega configurações
 config = get_config()
@@ -315,7 +315,7 @@ def generate_gabarito():
         logger.info(f"Gerando gabarito com {num_questions} questões")
         
         # Gera o PDF
-        pdf_content = generate_standard_gabarito_v2(num_questions)
+        pdf_content = generate_standard_gabarito(num_questions)
         
         # Converte para base64
         pdf_base64 = base64.b64encode(pdf_content).decode('utf-8')

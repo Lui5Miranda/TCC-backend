@@ -2,20 +2,18 @@
 # -*- coding: utf-8 -*-
 """
 Gerador de gabaritos padronizados em PDF
-Cria gabaritos otimizados para leitura automática
+Cria gabaritos idênticos à imagem com bolinhas e quadrados
 """
 
 import os
 import io
 import logging
-from reportlab.lib.pagesizes import A4, letter
+from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm, mm
-from reportlab.lib.colors import black, white, lightgrey
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.lib import colors
+from reportlab.lib.colors import black, white
 from reportlab.pdfgen import canvas
-from reportlab.lib.enums import TA_CENTER, TA_LEFT
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_LEFT, TA_CENTER
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -28,20 +26,10 @@ class GabaritoGenerator:
     def __init__(self):
         self.page_width, self.page_height = A4
         self.margin = 2*cm
-        self.bubble_size = 4*mm
-        self.bubble_spacing = 8*mm
-        self.question_spacing = 12*mm
         
-    def generate_gabarito_pdf(self, num_questions, filename=None):
+    def generate_gabarito_pdf(self, num_questions):
         """
-        Gera um gabarito padronizado em PDF
-        
-        Args:
-            num_questions (int): Número de questões (máximo 100)
-            filename (str): Nome do arquivo (opcional)
-            
-        Returns:
-            bytes: Conteúdo do PDF gerado
+        Gera um gabarito padronizado em PDF com bolinhas e quadrados
         """
         if num_questions > 100:
             raise ValueError("Número máximo de questões é 100")
@@ -51,64 +39,14 @@ class GabaritoGenerator:
         # Cria buffer para o PDF
         buffer = io.BytesIO()
         
-        # Cria o documento PDF
-        doc = SimpleDocTemplate(
-            buffer,
-            pagesize=A4,
-            rightMargin=self.margin,
-            leftMargin=self.margin,
-            topMargin=self.margin,
-            bottomMargin=self.margin
-        )
+        # Cria o canvas
+        c = canvas.Canvas(buffer, pagesize=A4)
         
-        # Estilos
-        styles = getSampleStyleSheet()
-        title_style = ParagraphStyle(
-            'CustomTitle',
-            parent=styles['Heading1'],
-            fontSize=18,
-            spaceAfter=30,
-            alignment=TA_CENTER,
-            textColor=colors.black
-        )
+        # Desenha o gabarito
+        self._draw_gabarito(c, num_questions)
         
-        subtitle_style = ParagraphStyle(
-            'CustomSubtitle',
-            parent=styles['Normal'],
-            fontSize=12,
-            spaceAfter=20,
-            alignment=TA_CENTER,
-            textColor=colors.grey
-        )
-        
-        # Conteúdo do documento
-        story = []
-        
-        # Título "RESPOSTAS" no canto superior esquerdo
-        title_style_left = ParagraphStyle(
-            'CustomTitleLeft',
-            parent=styles['Heading1'],
-            fontSize=16,
-            spaceAfter=20,
-            alignment=TA_LEFT,
-            textColor=colors.black
-        )
-        
-        story.append(Paragraph("RESPOSTAS", title_style_left))
-        story.append(Spacer(1, 10))
-        
-        # Gera as questões
-        questions_data = self._generate_questions_data(num_questions)
-        questions_table = self._create_questions_table(questions_data)
-        story.append(questions_table)
-        
-        # Adiciona instruções
-        story.append(Spacer(1, 30))
-        instructions = self._create_instructions()
-        story.append(instructions)
-        
-        # Constrói o PDF
-        doc.build(story, onFirstPage=self._add_corner_markers)
+        # Finaliza o PDF
+        c.save()
         
         # Retorna o conteúdo
         buffer.seek(0)
@@ -118,149 +56,114 @@ class GabaritoGenerator:
         logger.info(f"Gabarito gerado com {num_questions} questões")
         return pdf_content
     
-    def _generate_questions_data(self, num_questions):
+    def _draw_gabarito(self, c, num_questions):
         """
-        Gera dados das questões para o gabarito
+        Desenha o gabarito completo
         """
-        questions = []
-        alternatives = ['A', 'B', 'C', 'D', 'E']
+        # Desenha as questões com bolinhas e pega a posição Y final
+        lowest_y = self._draw_questions(c, num_questions)
         
-        for i in range(1, num_questions + 1):
-            question_data = {
-                'number': i,
-                'alternatives': alternatives
-            }
-            questions.append(question_data)
-            
-        return questions
+        # Desenha os 4 quadrados pretos nos cantos (usando o Y final)
+        self._draw_corner_markers(c, lowest_y)
     
-    def _create_questions_table(self, questions_data):
+    def _draw_corner_markers(self, c, bottom_y=None):
         """
-        Cria tabela com as questões do gabarito no formato específico com bolinhas
+        Desenha os 4 quadrados pretos nos cantos
         """
-        # Divide as questões em 3 colunas
-        questions_per_column = len(questions_data) // 3
-        if len(questions_data) % 3 > 0:
-            questions_per_column += 1
+        marker_size = 0.4*cm
+        
+        # Quadrado superior direito
+        c.setFillColor(colors.black)
+        c.rect(self.page_width - 1.5*cm, self.page_height - 1.5*cm, marker_size, marker_size, fill=1)
+        
+        # Quadrado superior esquerdo
+        c.rect(1.1*cm, self.page_height - 1.5*cm, marker_size, marker_size, fill=1)
+        
+        # Define a posição Y inferior
+        y_bottom = 1.1*cm
+        if bottom_y is not None:
+            y_bottom = bottom_y - 1.5*cm # 1.5cm abaixo da última questão (simétrico ao topo)
             
-        # Cria dados para 3 colunas
-        col1_data = []
-        col2_data = []
-        col3_data = []
+        # Quadrado inferior direito
+        c.rect(self.page_width - 1.5*cm, y_bottom, marker_size, marker_size, fill=1)
         
-        for i, question in enumerate(questions_data):
-            question_num = f"{question['number']:02d}"
-            row_data = [f"{question_num} -"]
-            
-            # Adiciona as alternativas A, B, C, D, E com bolinhas
-            for alt in question['alternatives']:
-                row_data.append(f"({alt})")
-            
-            # Distribui nas colunas
-            if i < questions_per_column:
-                col1_data.append(row_data)
-            elif i < questions_per_column * 2:
-                col2_data.append(row_data)
-            else:
-                col3_data.append(row_data)
-        
-        # Preenche colunas vazias para manter alinhamento
-        max_rows = max(len(col1_data), len(col2_data), len(col3_data))
-        
-        while len(col1_data) < max_rows:
-            col1_data.append(['', '', '', '', '', ''])
-        while len(col2_data) < max_rows:
-            col2_data.append(['', '', '', '', '', ''])
-        while len(col3_data) < max_rows:
-            col3_data.append(['', '', '', '', '', ''])
-        
-        # Cria tabela com 3 colunas
-        table_data = []
-        for i in range(max_rows):
-            row = col1_data[i] + col2_data[i] + col3_data[i]
-            table_data.append(row)
-        
-        # Larguras das colunas (6 colunas por seção = 18 colunas total)
-        col_widths = [1.2*cm] * 6 + [1.2*cm] * 6 + [1.2*cm] * 6
-        
-        table = Table(table_data, colWidths=col_widths)
-        
-        # Estilo da tabela
-        table_style = TableStyle([
-            # Alinhamento
-            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-            
-            # Fonte
-            ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 10),
-            
-            # Espaçamento
-            ('LEFTPADDING', (0, 0), (-1, -1), 4),
-            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-            ('TOPPADDING', (0, 0), (-1, -1), 6),
-            ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
-            
-            # Bordas entre colunas principais
-            ('LINEBEFORE', (6, 0), (6, -1), 1, colors.black),
-            ('LINEBEFORE', (12, 0), (12, -1), 1, colors.black),
-        ])
-        
-        table.setStyle(table_style)
-        return table
+        # Quadrado inferior esquerdo
+        c.rect(1.1*cm, y_bottom, marker_size, marker_size, fill=1)
     
-    def _create_instructions(self):
+    def _draw_title(self, c):
         """
-        Cria seção de instruções
+        Desenha o título "RESPOSTAS"
         """
-        styles = getSampleStyleSheet()
-        
-        instruction_style = ParagraphStyle(
-            'Instructions',
-            parent=styles['Normal'],
-            fontSize=10,
-            spaceAfter=6,
-            alignment=TA_LEFT,
-            textColor=colors.black
-        )
-        
-        instructions_text = """
-        <b>INSTRUÇÕES PARA PREENCHIMENTO:</b><br/>
-        1. Marque apenas uma alternativa por questão<br/>
-        2. Use caneta preta ou azul<br/>
-        3. Preencha completamente o círculo da alternativa escolhida<br/>
-        4. Não marque mais de uma alternativa por questão<br/>
-        5. Mantenha o gabarito limpo e sem rasuras<br/>
-        <br/>
-        <b>DICAS PARA MELHOR LEITURA AUTOMÁTICA:</b><br/>
-        • Use círculos bem preenchidos<br/>
-        • Evite marcas fora dos círculos<br/>
-        • Mantenha o gabarito plano durante a digitalização<br/>
-        • Use boa iluminação ao fotografar<br/>
-        """
-        
-        return Paragraph(instructions_text, instruction_style)
+        c.setFont("Helvetica-Bold", 18)
+        c.setFillColor(colors.black)
+        c.drawString(1.8*cm, self.page_height - 2.2*cm, "RESPOSTAS")
     
-    def _add_corner_markers(self, canvas, doc):
+    def _draw_questions(self, c, num_questions):
         """
-        Adiciona marcadores de canto pretos para alinhamento
+        Desenha as questões com bolinhas
         """
-        # Marcador superior direito
-        canvas.setFillColor(colors.black)
-        canvas.rect(doc.width - 2*cm, doc.height - 2*cm, 0.5*cm, 0.5*cm, fill=1)
+        # Configurações exatas como na imagem
+        left_margin = 2.2*cm  # Margem ajustada para centralizar mais
+        right_margin = 2.2*cm  # Margem ajustada para centralizar mais
+        available_width = self.page_width - left_margin - right_margin
         
-        # Marcador inferior esquerdo
-        canvas.rect(0, 0, 0.5*cm, 0.5*cm, fill=1)
+        start_x = left_margin
+        start_y = self.page_height - 3*cm # Ajustado para não ficar tão baixo
+        end_y = 1.5*cm  # Altura mínima para os quadrados inferiores
+        question_spacing = 0.5*cm
+        column_spacing = available_width / 3  # Divide o espaço disponível em 3 colunas iguais
+        bubble_size = 0.65*cm  # Bolinhas maiores
+        bubble_spacing = 0.85*cm # Espaçamento horizontal aumentado
+        
+        # Calcula o espaço vertical disponível
+        available_height = start_y - end_y
+        questions_per_column = (num_questions + 2) // 3
+        
+        # Ajusta o espaçamento para ficar exatamente como na imagem
+        if questions_per_column > 0:
+            question_spacing = available_height / questions_per_column
+            question_spacing = max(0.7*cm, min(question_spacing, 0.85*cm))  # Limita entre 0.7cm e 0.85cm
+        
+        for col in range(3):
+            col_x = start_x + col * column_spacing
+            
+            for row in range(questions_per_column):
+                question_num = row + 1 + col * questions_per_column
+                
+                if question_num > num_questions:
+                    break
+                
+                y_pos = start_y - row * question_spacing
+                
+                # Desenha o número da questão
+                c.setFont("Helvetica-Bold", 11)
+                c.drawString(col_x, y_pos, f"{question_num:02d} -")
+                
+                # Desenha as bolinhas A, B, C, D, E - exatamente como na imagem
+                bubble_start_x = col_x + 1.4*cm
+                bubble_center_y = y_pos + 0.1*cm  # Alinhamento vertical
+                
+                for i, letter in enumerate(['A', 'B', 'C', 'D', 'E']):
+                    bubble_center_x = bubble_start_x + i * bubble_spacing
+                    
+                    # Desenha o círculo (bolinha) - tamanho exato da imagem
+                    c.setStrokeColor(colors.black)
+                    c.setFillColor(colors.white)
+                    c.circle(bubble_center_x, bubble_center_y, bubble_size/2, fill=1, stroke=1)
+                    
+                    # Desenha a letra dentro da bolinha - tamanho exato
+                    c.setFont("Helvetica-Bold", 9)
+                    c.setFillColor(colors.black)
+                    c.drawCentredString(bubble_center_x, bubble_center_y - 0.1*cm, letter)
+        
+        # Retorna a posição Y da última linha desenhada
+        questions_per_column = (num_questions + 2) // 3
+        last_row_y = start_y - (questions_per_column - 1) * question_spacing
+        return last_row_y
 
 def generate_standard_gabarito(num_questions):
     """
     Função principal para gerar gabarito padronizado
-    
-    Args:
-        num_questions (int): Número de questões (1-100)
-        
-    Returns:
-        bytes: Conteúdo do PDF gerado
     """
     try:
         generator = GabaritoGenerator()

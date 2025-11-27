@@ -32,6 +32,10 @@ class ImageCache:
         self.access_times: Dict[str, float] = {}
         self.lock = Lock()
         
+        # Contadores para estatísticas
+        self._hit_count = 0
+        self._miss_count = 0
+        
         logger.info(f"Cache inicializado: max_size={max_size}, ttl={ttl_seconds}s")
     
     def _generate_key(self, image_data: str) -> str:
@@ -99,6 +103,7 @@ class ImageCache:
             key = self._generate_key(image_data)
             
             if key not in self.cache:
+                self._miss_count += 1
                 return None
             
             # Verifica se expirou
@@ -106,10 +111,12 @@ class ImageCache:
                 self.cache.pop(key, None)
                 self.access_times.pop(key, None)
                 logger.debug(f"Item expirado removido: {key}")
+                self._miss_count += 1
                 return None
             
             # Atualiza timestamp de acesso
             self.access_times[key] = time.time()
+            self._hit_count += 1
             
             logger.debug(f"Cache hit: {key}")
             return self.cache[key]
@@ -160,12 +167,18 @@ class ImageCache:
             active_items = sum(1 for timestamp in self.access_times.values() 
                              if current_time - timestamp <= self.ttl_seconds)
             
+            total_accesses = self._hit_count + self._miss_count
+            hit_rate = self._hit_count / total_accesses if total_accesses > 0 else 0.0
+            
             return {
                 'total_items': len(self.cache),
                 'active_items': active_items,
                 'max_size': self.max_size,
                 'ttl_seconds': self.ttl_seconds,
-                'hit_rate': getattr(self, '_hit_count', 0) / max(getattr(self, '_access_count', 1), 1)
+                'hit_count': self._hit_count,
+                'miss_count': self._miss_count,
+                'total_accesses': total_accesses,
+                'hit_rate': round(hit_rate, 4)
             }
 
 # Instância global do cache

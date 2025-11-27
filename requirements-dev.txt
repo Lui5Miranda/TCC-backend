@@ -1,0 +1,57 @@
+# Dependências de Desenvolvimento e Testes
+# Instale com: pip install -r requirements-dev.txt
+
+# Dependências de produção
+-r requirements.txt
+
+# ============================================================================
+# TESTES
+# ============================================================================
+# Framework de testes
+pytest>=7.4.0
+pytest-cov>=4.1.0          # Cobertura de código
+pytest-mock>=3.11.1        # Mocking
+pytest-flask>=1.2.0        # Testes Flask específicos
+
+# ============================================================================
+# QUALIDADE DE CÓDIGO
+# ============================================================================
+# Formatação de código
+black>=23.7.0              # Code formatter
+isort>=5.12.0              # Import sorter
+
+# Linting
+flake8>=6.1.0              # Linter
+pylint>=2.17.5             # Análise estática
+mypy>=1.5.1                # Type checker
+
+# ============================================================================
+# DOCUMENTAÇÃO
+# ============================================================================
+# Geração de docs
+sphinx>=7.2.0
+sphinx-rtd-theme>=1.3.0
+
+# ============================================================================
+# DESENVOLVIMENTO
+# ============================================================================
+# Debugging
+ipdb>=0.13.13              # Debugger interativo
+ipython>=8.15.0            # Shell interativo
+
+# Hot reload
+watchdog>=3.0.0            # File watcher
+
+# ============================================================================
+# PERFORMANCE
+# ============================================================================
+# Profiling
+memory-profiler>=0.61.0    # Profiling de memória
+line-profiler>=4.1.0       # Profiling linha por linha
+
+# ============================================================================
+# SEGURANÇA
+# ============================================================================
+# Análise de vulnerabilidades
+safety>=2.3.5              # Verifica dependências vulneráveis
+bandit>=1.7.5              # Security linter
