@@ -241,21 +241,21 @@ def extract_answers(sorted_bubbles, thresh_image, aligned_image):
         ratio = max_score / second_score if second_score > 0 else float('inf')
         
         # Threshold dinâmico: quanto maior o desvio padrão, mais confiável
-        base_threshold = 1.4  # Conservador
+        base_threshold = 1.15  # Mais sensível (era 1.4)
         
         # Condições para detectar marcação:
         # 1. Ratio > threshold (destaque em relação à segunda)
-        # 2. Pontuação absoluta significativa (> média + 0.5*desvio)
+        # 2. Pontuação absoluta significativa (> 10% acima da média)
         is_marked = (
             ratio > base_threshold and 
-            max_score > (mean_score + 0.5 * std_score) and
-            max_score > 100  # Mínimo absoluto para evitar ruído
+            max_score > (mean_score * 1.1) and
+            max_score > 50  # Mínimo absoluto reduzido
         )
         
         if is_marked:
             indice_marcado = pontuacoes.index(max_score)
             resposta = alternativas[indice_marcado]
-            logger.info(f"Questão {q + 1} - ✓ DETECTADA: {resposta} | Score: {max_score} vs {second_score} | Ratio: {ratio:.2f} | Média: {mean_score:.1f} | Std: {std_score:.1f}")
+            logger.info(f"Questão {q + 1} - ✓ DETECTADA: {resposta} | Score: {max_score} vs {second_score} | Ratio: {ratio:.2f} | Média: {mean_score:.1f}")
             
             # Desenha TODAS as bolhas
             for (j, c) in enumerate(cnts_por_questao):

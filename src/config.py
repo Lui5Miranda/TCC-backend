@@ -86,7 +86,7 @@ IMAGE_PROCESSING_CONFIG = {
             'max_value': 255,
             'method': 'ADAPTIVE_THRESH_GAUSSIAN_C',
             'threshold_type': 'THRESH_BINARY_INV',
-            'block_size': 25,
+            'block_size': 51,
             'c': 5
         },
         'min_size': 18,
