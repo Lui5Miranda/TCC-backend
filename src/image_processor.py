@@ -126,22 +126,18 @@ def detect_bubbles(aligned_image, num_questions=None):
     # Converte para escala de cinza
     warped_gray = cv2.cvtColor(aligned_image, cv2.COLOR_BGR2GRAY)
     
-    # MELHORIA 1: Aumento de Contraste (Preto mais preto, Branco mais branco)
-    # alpha = contraste (1.0-3.0), beta = brilho (0-100)
-    warped_gray = cv2.convertScaleAbs(warped_gray, alpha=1.5, beta=0)
-    logger.info("Contraste aumentado (alpha=1.5)")
-    
-    # MELHORIA 2: Aplica CLAHE para normalizar iluminação
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8)) # Aumentado clipLimit
+    # MELHORIA 1: Aplica CLAHE para normalizar iluminação
+    # CLAHE = Contrast Limited Adaptive Histogram Equalization
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
     warped_gray = clahe.apply(warped_gray)
     logger.info("CLAHE aplicado para normalização de iluminação")
     
-    # MELHORIA 3: Aplica GaussianBlur para reduzir ruído
-    warped_gray_blurred = cv2.GaussianBlur(warped_gray, (5, 5), 0)
+    # MELHORIA 2: Aplica GaussianBlur para reduzir ruído
+    warped_gray = cv2.GaussianBlur(warped_gray, (5, 5), 0)
     
-    # Threshold adaptativo (para detectar CONTORNOS das bolhas)
+    # Threshold adaptativo
     thresh = cv2.adaptiveThreshold(
-        warped_gray_blurred, 
+        warped_gray, 
         config['adaptive_threshold']['max_value'],
         getattr(cv2, config['adaptive_threshold']['method']),
         getattr(cv2, config['adaptive_threshold']['threshold_type']),
@@ -149,18 +145,10 @@ def detect_bubbles(aligned_image, num_questions=None):
         config['adaptive_threshold']['c']
     )
     
-    # MELHORIA 4: Threshold de OTSU (para PONTUAÇÃO/PREENCHIMENTO)
-    # Cria uma imagem binária super limpa para verificar o preenchimento
-    _, thresh_score = cv2.threshold(warped_gray_blurred, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
-    
-    # MELHORIA 5: Morfologia para limpar ruído
+    # MELHORIA 3: Morfologia para limpar ruído
     kernel = np.ones((3,3), np.uint8)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
-    
-    # Aplica morfologia também na imagem de score para garantir marcas sólidas
-    thresh_score = cv2.morphologyEx(thresh_score, cv2.MORPH_CLOSE, kernel, iterations=2)
-    
     logger.info("Operações morfológicas aplicadas")
     
     cnts, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -186,8 +174,7 @@ def detect_bubbles(aligned_image, num_questions=None):
         else:
              raise Exception(f"Não foi possível isolar as {expected_count} bolhas. Encontradas: {len(question_cnts)}.")
     
-    # Retorna os contornos E a imagem de score (Otsu) ao invés da adaptativa
-    return question_cnts, thresh_score
+    return question_cnts, thresh
 
 def sort_bubbles_by_columns(bubbles):
     """
@@ -210,7 +197,7 @@ def sort_bubbles_by_columns(bubbles):
 def extract_answers(sorted_bubbles, thresh_image, aligned_image):
     """
     Extrai as respostas marcadas das bolhas ordenadas
-    ABORDAGEM: Comparação RELATIVA com filtros de iluminação (CLAHE + Morfologia)
+    ABORDAGEM: Winner Takes All com ROI Masking e Threshold Local (Otsu)
     """
     config = IMAGE_PROCESSING_CONFIG['scoring']
     alternativas = {0: "A", 1: "B", 2: "C", 3: "D", 4: "E"}
@@ -219,65 +206,75 @@ def extract_answers(sorted_bubbles, thresh_image, aligned_image):
     # Prepara a imagem para o resultado visual final
     resultado_visual_img = aligned_image.copy()
     
+    # Converte imagem original para escala de cinza para processamento de ROI
+    gray_image = cv2.cvtColor(aligned_image, cv2.COLOR_BGR2GRAY)
+    
     logger.info(f"Processando {len(sorted_bubbles)} bolhas em grupos de 5")
-    logger.info("Usando comparação RELATIVA com threshold dinâmico")
+    logger.info("Usando algoritmo Winner Takes All com ROI Masking")
     
     for (q, i) in enumerate(np.arange(0, len(sorted_bubbles), 5)):
         cnts_por_questao = contours.sort_contours(sorted_bubbles[i:i + 5])[0]
         
-        # Conta pixels BRANCOS (marcados) em cada bolha
-        pontuacoes = []
+        pixel_counts = []
+        
+        # Analisa cada bolha da questão
         for c in cnts_por_questao:
-            mask = np.zeros(thresh_image.shape, dtype="uint8")
-            cv2.drawContours(mask, [c], -1, 255, -1)
-            mask_filled = cv2.bitwise_and(thresh_image, thresh_image, mask=mask)
-            total = cv2.countNonZero(mask_filled)
-            pontuacoes.append(total)
+            (x, y, w, h) = cv2.boundingRect(c)
+            
+            # Define margem interna (padding) para ignorar a borda impressa da bolha
+            # Usa 18% da largura/altura como margem (foca no centro)
+            margin_x = int(w * 0.18)
+            margin_y = int(h * 0.18)
+            
+            # Garante que a ROI é válida
+            if w <= 2*margin_x or h <= 2*margin_y:
+                pixel_counts.append(0)
+                continue
+                
+            # Extrai ROI da imagem em escala de cinza (apenas o centro da bolha)
+            roi = gray_image[y+margin_y:y+h-margin_y, x+margin_x:x+w-margin_x]
+            
+            # Aplica Threshold Otsu Binário Invertido LOCALMENTE na ROI
+            # Isso se adapta à iluminação específica daquela bolha
+            # Pixels escuros (marcação) viram brancos (255), fundo vira preto (0)
+            _, roi_thresh = cv2.threshold(roi, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+            
+            # Conta pixels preenchidos
+            pixels = cv2.countNonZero(roi_thresh)
+            pixel_counts.append(pixels)
         
-        # Log das pontuações
-        logger.info(f"Questão {q + 1} - Pontuações: {pontuacoes}")
+        # Log das contagens de pixels
+        logger.info(f"Questão {q + 1} - Pixels: {pixel_counts}")
         
-        # Ordena pontuações
-        sorted_scores = sorted(pontuacoes, reverse=True)
+        # Lógica Winner Takes All
+        max_pixels = max(pixel_counts)
+        winner_idx = pixel_counts.index(max_pixels)
         
-        # Calcula estatísticas
-        max_score = sorted_scores[0]
-        second_score = sorted_scores[1] if len(sorted_scores) > 1 else 0
-        mean_score = np.mean(pontuacoes)
-        std_score = np.std(pontuacoes)
+        # Validação: Verifica se o vencedor se destaca dos outros
+        others = pixel_counts[:winner_idx] + pixel_counts[winner_idx+1:]
+        avg_others = sum(others) / len(others) if others else 0
         
-        # ALGORITMO DE DETECÇÃO:
-        # 1. A maior pontuação deve ser significativamente maior que a segunda
-        # 2. A maior pontuação deve estar acima da média + desvio padrão
+        # Critérios para considerar marcado:
+        # 1. Deve ter uma quantidade mínima de pixels (evita ruído em linhas vazias)
+        # 2. Deve ser significativamente maior que a média dos outros (ex: 30% maior)
+        MIN_PIXELS = 20  # Mínimo absoluto de pixels
+        RATIO_THRESHOLD = 1.3  # Deve ser 30% maior que a média dos outros
         
-        # Calcula ratio
-        ratio = max_score / second_score if second_score > 0 else float('inf')
-        
-        # Threshold dinâmico: quanto maior o desvio padrão, mais confiável
-        base_threshold = 1.15  # Mais sensível (era 1.4)
-        
-        # Condições para detectar marcação:
-        # 1. Ratio > threshold (destaque em relação à segunda)
-        # 2. Pontuação absoluta significativa (> 10% acima da média)
-        is_marked = (
-            ratio > base_threshold and 
-            max_score > (mean_score * 1.1) and
-            max_score > 50  # Mínimo absoluto reduzido
-        )
+        is_marked = (max_pixels > MIN_PIXELS) and (max_pixels > avg_others * RATIO_THRESHOLD)
         
         if is_marked:
-            indice_marcado = pontuacoes.index(max_score)
-            resposta = alternativas[indice_marcado]
-            logger.info(f"Questão {q + 1} - ✓ DETECTADA: {resposta} | Score: {max_score} vs {second_score} | Ratio: {ratio:.2f} | Média: {mean_score:.1f}")
+            resposta = alternativas[winner_idx]
+            ratio = max_pixels / avg_others if avg_others > 0 else float('inf')
+            logger.info(f"Questão {q + 1} - ✓ DETECTADA: {resposta} | Max: {max_pixels} | Média Outros: {avg_others:.1f} | Ratio: {ratio:.2f}")
             
-            # Desenha TODAS as bolhas
+            # Desenha as bolhas
             for (j, c) in enumerate(cnts_por_questao):
                 (x, y, w, h) = cv2.boundingRect(c)
                 centro_x = x + w // 2
                 centro_y = y + h // 2
                 raio = max(w, h) // 2
                 
-                if j == indice_marcado:
+                if j == winner_idx:
                     # 🟡 AMARELO para bolha MARCADA
                     cv2.circle(resultado_visual_img, (centro_x, centro_y), raio, (0, 255, 255), 3)
                 else:
@@ -285,7 +282,7 @@ def extract_answers(sorted_bubbles, thresh_image, aligned_image):
                     cv2.circle(resultado_visual_img, (centro_x, centro_y), raio, (0, 255, 0), 2)
         else:
             resposta = "NÃO MARCADA"
-            logger.info(f"Questão {q + 1} - ✗ NÃO MARCADA | Score: {max_score} vs {second_score} | Ratio: {ratio:.2f} | Média: {mean_score:.1f}")
+            logger.info(f"Questão {q + 1} - ✗ NÃO MARCADA | Max: {max_pixels} | Média Outros: {avg_others:.1f}")
             
             # Desenha todas em VERDE
             for c in cnts_por_questao:
