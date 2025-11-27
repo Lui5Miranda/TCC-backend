@@ -60,16 +60,13 @@ class GabaritoGeneratorV2:
         """
         Desenha o gabarito completo
         """
-        # Desenha os 4 quadrados pretos nos cantos
-        self._draw_corner_markers(c)
+        # Desenha as questões com bolinhas e pega a posição Y final
+        lowest_y = self._draw_questions(c, num_questions)
         
-        # Desenha o título "RESPOSTAS"
-        self._draw_title(c)
-        
-        # Desenha as questões com bolinhas
-        self._draw_questions(c, num_questions)
+        # Desenha os 4 quadrados pretos nos cantos (usando o Y final)
+        self._draw_corner_markers(c, lowest_y)
     
-    def _draw_corner_markers(self, c):
+    def _draw_corner_markers(self, c, bottom_y=None):
         """
         Desenha os 4 quadrados pretos nos cantos
         """
@@ -82,11 +79,16 @@ class GabaritoGeneratorV2:
         # Quadrado superior esquerdo
         c.rect(1.1*cm, self.page_height - 1.5*cm, marker_size, marker_size, fill=1)
         
+        # Define a posição Y inferior
+        y_bottom = 1.1*cm
+        if bottom_y is not None:
+            y_bottom = bottom_y - 1.5*cm # 1.5cm abaixo da última questão (simétrico ao topo)
+            
         # Quadrado inferior direito
-        c.rect(self.page_width - 1.5*cm, 1.1*cm, marker_size, marker_size, fill=1)
+        c.rect(self.page_width - 1.5*cm, y_bottom, marker_size, marker_size, fill=1)
         
         # Quadrado inferior esquerdo
-        c.rect(1.1*cm, 1.1*cm, marker_size, marker_size, fill=1)
+        c.rect(1.1*cm, y_bottom, marker_size, marker_size, fill=1)
     
     def _draw_title(self, c):
         """
@@ -94,24 +96,24 @@ class GabaritoGeneratorV2:
         """
         c.setFont("Helvetica-Bold", 18)
         c.setFillColor(colors.black)
-        c.drawString(1.3*cm, self.page_height - 2.2*cm, "RESPOSTAS")
+        c.drawString(1.8*cm, self.page_height - 2.2*cm, "RESPOSTAS")
     
     def _draw_questions(self, c, num_questions):
         """
         Desenha as questões com bolinhas
         """
         # Configurações exatas como na imagem
-        left_margin = 1.3*cm  # Margem esquerda (após quadrado)
-        right_margin = 1.5*cm  # Margem direita (antes do quadrado)
+        left_margin = 2.2*cm  # Margem ajustada para centralizar mais
+        right_margin = 2.2*cm  # Margem ajustada para centralizar mais
         available_width = self.page_width - left_margin - right_margin
         
         start_x = left_margin
-        start_y = self.page_height - 3.5*cm
+        start_y = self.page_height - 3*cm # Ajustado para não ficar tão baixo
         end_y = 1.5*cm  # Altura mínima para os quadrados inferiores
         question_spacing = 0.5*cm
         column_spacing = available_width / 3  # Divide o espaço disponível em 3 colunas iguais
-        bubble_size = 0.5*cm  # Bolinhas do tamanho da imagem
-        bubble_spacing = 0.6*cm
+        bubble_size = 0.65*cm  # Bolinhas maiores
+        bubble_spacing = 0.85*cm # Espaçamento horizontal aumentado
         
         # Calcula o espaço vertical disponível
         available_height = start_y - end_y
@@ -120,7 +122,7 @@ class GabaritoGeneratorV2:
         # Ajusta o espaçamento para ficar exatamente como na imagem
         if questions_per_column > 0:
             question_spacing = available_height / questions_per_column
-            question_spacing = max(0.5*cm, min(question_spacing, 0.6*cm))  # Limita entre 0.5cm e 0.6cm
+            question_spacing = max(0.7*cm, min(question_spacing, 0.85*cm))  # Limita entre 0.7cm e 0.85cm
         
         for col in range(3):
             col_x = start_x + col * column_spacing
@@ -153,6 +155,11 @@ class GabaritoGeneratorV2:
                     c.setFont("Helvetica-Bold", 9)
                     c.setFillColor(colors.black)
                     c.drawCentredString(bubble_center_x, bubble_center_y - 0.1*cm, letter)
+        
+        # Retorna a posição Y da última linha desenhada
+        questions_per_column = (num_questions + 2) // 3
+        last_row_y = start_y - (questions_per_column - 1) * question_spacing
+        return last_row_y
 
 def generate_standard_gabarito_v2(num_questions):
     """
