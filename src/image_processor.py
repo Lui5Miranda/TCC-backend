@@ -126,18 +126,22 @@ def detect_bubbles(aligned_image, num_questions=None):
     # Converte para escala de cinza
     warped_gray = cv2.cvtColor(aligned_image, cv2.COLOR_BGR2GRAY)
     
-    # MELHORIA 1: Aplica CLAHE para normalizar iluminação
-    # CLAHE = Contrast Limited Adaptive Histogram Equalization
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    # MELHORIA 1: Aumento de Contraste (Preto mais preto, Branco mais branco)
+    # alpha = contraste (1.0-3.0), beta = brilho (0-100)
+    warped_gray = cv2.convertScaleAbs(warped_gray, alpha=1.5, beta=0)
+    logger.info("Contraste aumentado (alpha=1.5)")
+    
+    # MELHORIA 2: Aplica CLAHE para normalizar iluminação
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8)) # Aumentado clipLimit
     warped_gray = clahe.apply(warped_gray)
     logger.info("CLAHE aplicado para normalização de iluminação")
     
-    # MELHORIA 2: Aplica GaussianBlur para reduzir ruído
-    warped_gray = cv2.GaussianBlur(warped_gray, (5, 5), 0)
+    # MELHORIA 3: Aplica GaussianBlur para reduzir ruído
+    warped_gray_blurred = cv2.GaussianBlur(warped_gray, (5, 5), 0)
     
-    # Threshold adaptativo
+    # Threshold adaptativo (para detectar CONTORNOS das bolhas)
     thresh = cv2.adaptiveThreshold(
-        warped_gray, 
+        warped_gray_blurred, 
         config['adaptive_threshold']['max_value'],
         getattr(cv2, config['adaptive_threshold']['method']),
         getattr(cv2, config['adaptive_threshold']['threshold_type']),
@@ -145,10 +149,18 @@ def detect_bubbles(aligned_image, num_questions=None):
         config['adaptive_threshold']['c']
     )
     
-    # MELHORIA 3: Morfologia para limpar ruído
+    # MELHORIA 4: Threshold de OTSU (para PONTUAÇÃO/PREENCHIMENTO)
+    # Cria uma imagem binária super limpa para verificar o preenchimento
+    _, thresh_score = cv2.threshold(warped_gray_blurred, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+    
+    # MELHORIA 5: Morfologia para limpar ruído
     kernel = np.ones((3,3), np.uint8)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=1)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
+    
+    # Aplica morfologia também na imagem de score para garantir marcas sólidas
+    thresh_score = cv2.morphologyEx(thresh_score, cv2.MORPH_CLOSE, kernel, iterations=2)
+    
     logger.info("Operações morfológicas aplicadas")
     
     cnts, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -163,14 +175,6 @@ def detect_bubbles(aligned_image, num_questions=None):
     
     logger.info(f"Encontradas {len(question_cnts)} bolhas potenciais")
     
-    # MELHORIA 4: Reconstrução de Grade (Grid Reconstruction)
-    # Tenta recuperar bolhas perdidas baseando-se na distância média
-    try:
-        question_cnts = reconstruct_missing_bubbles(question_cnts)
-        logger.info(f"Após reconstrução de grade: {len(question_cnts)} bolhas")
-    except Exception as e:
-        logger.error(f"Erro na reconstrução de grade: {e}")
-    
     if len(question_cnts) >= expected_count:
         question_cnts = sorted(question_cnts, key=cv2.contourArea, reverse=True)[:expected_count]
         logger.info(f"Ruído removido. Restaram {len(question_cnts)} bolhas.")
@@ -180,116 +184,10 @@ def detect_bubbles(aligned_image, num_questions=None):
         if num_questions and len(question_cnts) > 0 and len(question_cnts) % 5 == 0:
              logger.warning(f"Número de bolhas ({len(question_cnts)}) diferente do esperado ({expected_count}), mas é múltiplo de 5. Tentando processar.")
         else:
-             # Última tentativa: se faltam poucas, tenta prosseguir assim mesmo para não travar
-             if len(question_cnts) > expected_count * 0.9:
-                 logger.warning(f"Faltam algumas bolhas ({len(question_cnts)}/{expected_count}), mas prosseguindo.")
-             else:
-                 raise Exception(f"Não foi possível isolar as {expected_count} bolhas. Encontradas: {len(question_cnts)}.")
+             raise Exception(f"Não foi possível isolar as {expected_count} bolhas. Encontradas: {len(question_cnts)}.")
     
-    return question_cnts, thresh
-
-def reconstruct_missing_bubbles(cnts):
-    """
-    Reconstrói bolhas perdidas analisando a grade e distâncias médias
-    """
-    if not cnts:
-        return []
-        
-    # 1. Agrupa por linhas (Y)
-    # Ordena por Y
-    boxes = [cv2.boundingRect(c) for c in cnts]
-    zipped = sorted(zip(cnts, boxes), key=lambda b: b[1][1])
-    cnts_sorted, boxes_sorted = zip(*zipped)
-    
-    rows = []
-    current_row = []
-    last_y = -1
-    avg_h = np.mean([b[3] for b in boxes])
-    
-    # Threshold vertical: metade da altura média
-    y_threshold = avg_h * 0.5
-    
-    for c, box in zip(cnts_sorted, boxes_sorted):
-        x, y, w, h = box
-        if last_y == -1 or abs(y - last_y) < y_threshold:
-            current_row.append((c, box))
-            # Atualiza Y médio da linha
-            last_y = (last_y * len(current_row) + y) / (len(current_row) + 1) if last_y != -1 else y
-        else:
-            rows.append(current_row)
-            current_row = [(c, box)]
-            last_y = y
-    if current_row:
-        rows.append(current_row)
-        
-    final_cnts = []
-    
-    # 2. Processa cada linha para achar buracos
-    for row in rows:
-        # Ordena por X
-        row.sort(key=lambda b: b[1][0])
-        
-        # Se a linha tem poucas bolhas, ignora (pode ser ruído)
-        if len(row) < 2:
-            final_cnts.extend([c for c, _ in row])
-            continue
-            
-        # Calcula largura média e distância média
-        widths = [b[2] for c, b in row]
-        avg_width = np.median(widths)
-        
-        xs = [b[0] for c, b in row]
-        gaps = []
-        for i in range(len(xs) - 1):
-            # Distância entre início de uma e início da próxima
-            dist = xs[i+1] - xs[i]
-            gaps.append(dist)
-            
-        if not gaps:
-            final_cnts.extend([c for c, _ in row])
-            continue
-            
-        median_step = np.median(gaps)
-        
-        # Reconstrói a linha preenchendo lacunas
-        reconstructed_row = []
-        
-        for i in range(len(row)):
-            curr_c, curr_box = row[i]
-            reconstructed_row.append(curr_c)
-            
-            if i < len(row) - 1:
-                curr_x = curr_box[0]
-                next_x = row[i+1][1][0]
-                
-                dist = next_x - curr_x
-                
-                # Se a distância é aprox 2x o passo (ou mais), falta bolha
-                # Tolerância: 1.5x o passo
-                if dist > median_step * 1.5:
-                    missing_count = int(round(dist / median_step)) - 1
-                    
-                    if missing_count > 0:
-                        # logger.info(f"Detectado(s) {missing_count} bolha(s) faltando na linha Y={curr_box[1]}")
-                        for m in range(missing_count):
-                            # Cria bolha sintética
-                            new_x = int(curr_x + (median_step * (m + 1)))
-                            new_y = curr_box[1]
-                            new_w = int(avg_width)
-                            new_h = curr_box[3]
-                            
-                            # Cria contorno retangular
-                            pt1 = [new_x, new_y]
-                            pt2 = [new_x + new_w, new_y]
-                            pt3 = [new_x + new_w, new_y + new_h]
-                            pt4 = [new_x, new_y + new_h]
-                            
-                            synthetic_cnt = np.array([[pt1], [pt2], [pt3], [pt4]], dtype=np.int32)
-                            reconstructed_row.append(synthetic_cnt)
-                            
-        final_cnts.extend(reconstructed_row)
-        
-    return final_cnts
+    # Retorna os contornos E a imagem de score (Otsu) ao invés da adaptativa
+    return question_cnts, thresh_score
 
 def sort_bubbles_by_columns(bubbles):
     """
