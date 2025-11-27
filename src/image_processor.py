@@ -197,7 +197,7 @@ def sort_bubbles_by_columns(bubbles):
 def extract_answers(sorted_bubbles, thresh_image, aligned_image):
     """
     Extrai as respostas marcadas das bolhas ordenadas
-    NOVA ABORDAGEM: Usa percentual de preenchimento absoluto ao invés de comparação relativa
+    ABORDAGEM: Comparação RELATIVA com filtros de iluminação (CLAHE + Morfologia)
     """
     config = IMAGE_PROCESSING_CONFIG['scoring']
     alternativas = {0: "A", 1: "B", 2: "C", 3: "D", 4: "E"}
@@ -206,46 +206,56 @@ def extract_answers(sorted_bubbles, thresh_image, aligned_image):
     # Prepara a imagem para o resultado visual final
     resultado_visual_img = aligned_image.copy()
     
-    # THRESHOLD DE PREENCHIMENTO: Se bolha tem >45% de pixels pretos, está marcada
-    # Aumentado de 30% para 45% para reduzir falsos positivos
-    FILL_THRESHOLD = 0.45  # 45% preenchido = marcado
-    
     logger.info(f"Processando {len(sorted_bubbles)} bolhas em grupos de 5")
-    logger.info(f"Usando threshold de preenchimento: {FILL_THRESHOLD*100}%")
+    logger.info("Usando comparação RELATIVA com threshold dinâmico")
     
     for (q, i) in enumerate(np.arange(0, len(sorted_bubbles), 5)):
         cnts_por_questao = contours.sort_contours(sorted_bubbles[i:i + 5])[0]
         
-        # Calcula PERCENTUAL DE PREENCHIMENTO de cada bolha
-        fill_percentages = []
+        # Conta pixels BRANCOS (marcados) em cada bolha
+        pontuacoes = []
         for c in cnts_por_questao:
-            # Área total da bolha
-            area = cv2.contourArea(c)
-            
-            # Cria máscara para essa bolha
             mask = np.zeros(thresh_image.shape, dtype="uint8")
             cv2.drawContours(mask, [c], -1, 255, -1)
-            
-            # Conta pixels BRANCOS (marcados) dentro da bolha
             mask_filled = cv2.bitwise_and(thresh_image, thresh_image, mask=mask)
-            filled_pixels = cv2.countNonZero(mask_filled)
-            
-            # Calcula PERCENTUAL de preenchimento
-            fill_percentage = filled_pixels / area if area > 0 else 0
-            fill_percentages.append(fill_percentage)
+            total = cv2.countNonZero(mask_filled)
+            pontuacoes.append(total)
         
-        # Log com percentuais
-        fill_pcts_formatted = [f"{p*100:.1f}%" for p in fill_percentages]
-        logger.info(f"Questão {q + 1} - Preenchimento: {fill_pcts_formatted}")
+        # Log das pontuações
+        logger.info(f"Questão {q + 1} - Pontuações: {pontuacoes}")
         
-        # Encontra bolhas marcadas (acima do threshold)
-        marked_indices = [i for i, pct in enumerate(fill_percentages) if pct > FILL_THRESHOLD]
+        # Ordena pontuações
+        sorted_scores = sorted(pontuacoes, reverse=True)
         
-        if len(marked_indices) == 1:
-            # Exatamente 1 bolha marcada - CORRETO!
-            indice_marcado = marked_indices[0]
+        # Calcula estatísticas
+        max_score = sorted_scores[0]
+        second_score = sorted_scores[1] if len(sorted_scores) > 1 else 0
+        mean_score = np.mean(pontuacoes)
+        std_score = np.std(pontuacoes)
+        
+        # ALGORITMO DE DETECÇÃO:
+        # 1. A maior pontuação deve ser significativamente maior que a segunda
+        # 2. A maior pontuação deve estar acima da média + desvio padrão
+        
+        # Calcula ratio
+        ratio = max_score / second_score if second_score > 0 else float('inf')
+        
+        # Threshold dinâmico: quanto maior o desvio padrão, mais confiável
+        base_threshold = 1.4  # Conservador
+        
+        # Condições para detectar marcação:
+        # 1. Ratio > threshold (destaque em relação à segunda)
+        # 2. Pontuação absoluta significativa (> média + 0.5*desvio)
+        is_marked = (
+            ratio > base_threshold and 
+            max_score > (mean_score + 0.5 * std_score) and
+            max_score > 100  # Mínimo absoluto para evitar ruído
+        )
+        
+        if is_marked:
+            indice_marcado = pontuacoes.index(max_score)
             resposta = alternativas[indice_marcado]
-            logger.info(f"Questão {q + 1} - ✓ DETECTADA: {resposta} ({fill_percentages[indice_marcado]*100:.1f}% preenchido)")
+            logger.info(f"Questão {q + 1} - ✓ DETECTADA: {resposta} | Score: {max_score} vs {second_score} | Ratio: {ratio:.2f} | Média: {mean_score:.1f} | Std: {std_score:.1f}")
             
             # Desenha TODAS as bolhas
             for (j, c) in enumerate(cnts_por_questao):
@@ -260,26 +270,9 @@ def extract_answers(sorted_bubbles, thresh_image, aligned_image):
                 else:
                     # 🟢 VERDE para bolhas NÃO MARCADAS
                     cv2.circle(resultado_visual_img, (centro_x, centro_y), raio, (0, 255, 0), 2)
-                    
-        elif len(marked_indices) > 1:
-            # Múltiplas bolhas marcadas - DÚVIDA
-            marked_alts = [alternativas[i] for i in marked_indices]
-            resposta = "MÚLTIPLAS MARCADAS"
-            logger.info(f"Questão {q + 1} - ⚠ MÚLTIPLAS: {marked_alts}")
-            
-            # Desenha todas em VERMELHO (erro)
-            for c in cnts_por_questao:
-                (x, y, w, h) = cv2.boundingRect(c)
-                centro_x = x + w // 2
-                centro_y = y + h // 2
-                raio = max(w, h) // 2
-                cv2.circle(resultado_visual_img, (centro_x, centro_y), raio, (0, 0, 255), 2)
-                
         else:
-            # Nenhuma bolha marcada
             resposta = "NÃO MARCADA"
-            max_fill = max(fill_percentages) if fill_percentages else 0
-            logger.info(f"Questão {q + 1} - ✗ NÃO MARCADA (maior: {max_fill*100:.1f}%)")
+            logger.info(f"Questão {q + 1} - ✗ NÃO MARCADA | Score: {max_score} vs {second_score} | Ratio: {ratio:.2f} | Média: {mean_score:.1f}")
             
             # Desenha todas em VERDE
             for c in cnts_por_questao:
