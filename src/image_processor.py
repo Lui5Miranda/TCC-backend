@@ -163,6 +163,14 @@ def detect_bubbles(aligned_image, num_questions=None):
     
     logger.info(f"Encontradas {len(question_cnts)} bolhas potenciais")
     
+    # MELHORIA 4: Reconstrução de Grade (Grid Reconstruction)
+    # Tenta recuperar bolhas perdidas baseando-se na distância média
+    try:
+        question_cnts = reconstruct_missing_bubbles(question_cnts)
+        logger.info(f"Após reconstrução de grade: {len(question_cnts)} bolhas")
+    except Exception as e:
+        logger.error(f"Erro na reconstrução de grade: {e}")
+    
     if len(question_cnts) >= expected_count:
         question_cnts = sorted(question_cnts, key=cv2.contourArea, reverse=True)[:expected_count]
         logger.info(f"Ruído removido. Restaram {len(question_cnts)} bolhas.")
@@ -172,9 +180,116 @@ def detect_bubbles(aligned_image, num_questions=None):
         if num_questions and len(question_cnts) > 0 and len(question_cnts) % 5 == 0:
              logger.warning(f"Número de bolhas ({len(question_cnts)}) diferente do esperado ({expected_count}), mas é múltiplo de 5. Tentando processar.")
         else:
-             raise Exception(f"Não foi possível isolar as {expected_count} bolhas. Encontradas: {len(question_cnts)}.")
+             # Última tentativa: se faltam poucas, tenta prosseguir assim mesmo para não travar
+             if len(question_cnts) > expected_count * 0.9:
+                 logger.warning(f"Faltam algumas bolhas ({len(question_cnts)}/{expected_count}), mas prosseguindo.")
+             else:
+                 raise Exception(f"Não foi possível isolar as {expected_count} bolhas. Encontradas: {len(question_cnts)}.")
     
     return question_cnts, thresh
+
+def reconstruct_missing_bubbles(cnts):
+    """
+    Reconstrói bolhas perdidas analisando a grade e distâncias médias
+    """
+    if not cnts:
+        return []
+        
+    # 1. Agrupa por linhas (Y)
+    # Ordena por Y
+    boxes = [cv2.boundingRect(c) for c in cnts]
+    zipped = sorted(zip(cnts, boxes), key=lambda b: b[1][1])
+    cnts_sorted, boxes_sorted = zip(*zipped)
+    
+    rows = []
+    current_row = []
+    last_y = -1
+    avg_h = np.mean([b[3] for b in boxes])
+    
+    # Threshold vertical: metade da altura média
+    y_threshold = avg_h * 0.5
+    
+    for c, box in zip(cnts_sorted, boxes_sorted):
+        x, y, w, h = box
+        if last_y == -1 or abs(y - last_y) < y_threshold:
+            current_row.append((c, box))
+            # Atualiza Y médio da linha
+            last_y = (last_y * len(current_row) + y) / (len(current_row) + 1) if last_y != -1 else y
+        else:
+            rows.append(current_row)
+            current_row = [(c, box)]
+            last_y = y
+    if current_row:
+        rows.append(current_row)
+        
+    final_cnts = []
+    
+    # 2. Processa cada linha para achar buracos
+    for row in rows:
+        # Ordena por X
+        row.sort(key=lambda b: b[1][0])
+        
+        # Se a linha tem poucas bolhas, ignora (pode ser ruído)
+        if len(row) < 2:
+            final_cnts.extend([c for c, _ in row])
+            continue
+            
+        # Calcula largura média e distância média
+        widths = [b[2] for c, b in row]
+        avg_width = np.median(widths)
+        
+        xs = [b[0] for c, b in row]
+        gaps = []
+        for i in range(len(xs) - 1):
+            # Distância entre início de uma e início da próxima
+            dist = xs[i+1] - xs[i]
+            gaps.append(dist)
+            
+        if not gaps:
+            final_cnts.extend([c for c, _ in row])
+            continue
+            
+        median_step = np.median(gaps)
+        
+        # Reconstrói a linha preenchendo lacunas
+        reconstructed_row = []
+        
+        for i in range(len(row)):
+            curr_c, curr_box = row[i]
+            reconstructed_row.append(curr_c)
+            
+            if i < len(row) - 1:
+                curr_x = curr_box[0]
+                next_x = row[i+1][1][0]
+                
+                dist = next_x - curr_x
+                
+                # Se a distância é aprox 2x o passo (ou mais), falta bolha
+                # Tolerância: 1.5x o passo
+                if dist > median_step * 1.5:
+                    missing_count = int(round(dist / median_step)) - 1
+                    
+                    if missing_count > 0:
+                        # logger.info(f"Detectado(s) {missing_count} bolha(s) faltando na linha Y={curr_box[1]}")
+                        for m in range(missing_count):
+                            # Cria bolha sintética
+                            new_x = int(curr_x + (median_step * (m + 1)))
+                            new_y = curr_box[1]
+                            new_w = int(avg_width)
+                            new_h = curr_box[3]
+                            
+                            # Cria contorno retangular
+                            pt1 = [new_x, new_y]
+                            pt2 = [new_x + new_w, new_y]
+                            pt3 = [new_x + new_w, new_y + new_h]
+                            pt4 = [new_x, new_y + new_h]
+                            
+                            synthetic_cnt = np.array([[pt1], [pt2], [pt3], [pt4]], dtype=np.int32)
+                            reconstructed_row.append(synthetic_cnt)
+                            
+        final_cnts.extend(reconstructed_row)
+        
+    return final_cnts
 
 def sort_bubbles_by_columns(bubbles):
     """
