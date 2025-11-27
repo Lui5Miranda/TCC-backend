@@ -1,14 +1,42 @@
 services:
   - type: web
     name: tcc-backend
-    env: python
-    region: oregon
+    runtime: python
+    region: virginia
+    plan: free
+    branch: main
     buildCommand: pip install -r requirements.txt
-    startCommand: python src/server.py
+    startCommand: gunicorn --bind 0.0.0.0:$PORT --workers 1 --timeout 120 src.server:app
+    healthCheckPath: /healthz
     envVars:
-      - key: PORT
-        value: 5000
       - key: FLASK_ENV
         value: production
       - key: FLASK_DEBUG
         value: false
+      - key: HOST
+        value: 0.0.0.0
+      - key: LOG_LEVEL
+        value: INFO
+      - key: MAX_CONTENT_LENGTH
+        value: 67108864
+      - key: ALLOWED_EXTENSIONS
+        value: png,jpg,jpeg,gif,bmp,tiff
+      - key: MIN_IMAGE_WIDTH
+        value: 100
+      - key: MIN_IMAGE_HEIGHT
+        value: 100
+      - key: MAX_IMAGE_WIDTH
+        value: 8000
+      - key: MAX_IMAGE_HEIGHT
+        value: 8000
+      - key: MIN_BUBBLE_SIZE
+        value: 18
+      - key: CONFIDENCE_THRESHOLD
+        value: 1.5
+      - key: CACHE_MAX_SIZE
+        value: 50
+      - key: CACHE_TTL_SECONDS
+        value: 1800
+      # IMPORTANTE: Adicione o domínio do seu frontend aqui
+      - key: CORS_ORIGINS
+        value: http://localhost:3000,http://127.0.0.1:3000

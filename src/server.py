@@ -348,6 +348,13 @@ def health_check():
         'timestamp': datetime.now().isoformat()
     })
 
+@app.route('/healthz', methods=['GET'])
+def healthz():
+    """
+    Endpoint de health check para Render (alias de /api/health)
+    """
+    return health_check()
+
 @app.route('/api/cache/stats', methods=['GET'])
 def cache_stats():
     """
