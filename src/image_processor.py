@@ -235,7 +235,8 @@ def extract_answers(sorted_bubbles, thresh_image, aligned_image):
             cv2.circle(resultado_visual_img, (centro_x, centro_y), raio, (0, 255, 255), 3)
         else:
             resposta = "NÃO MARCADA"
-            logger.info(f"Questão {q + 1} - Não detectada (confiança baixa: {sorted_scores[0]} vs {sorted_scores[1]}, ratio: {sorted_scores[0]/sorted_scores[1]:.2f if sorted_scores[1] > 0 else 'inf'})")
+            ratio = sorted_scores[0]/sorted_scores[1] if sorted_scores[1] > 0 else float('inf')
+            logger.info(f"Questão {q + 1} - Não detectada (confiança baixa: {sorted_scores[0]} vs {sorted_scores[1]}, ratio: {ratio:.2f})")
         
         # SEMPRE registra a resposta na ordem correta
         respostas_marcadas[q + 1] = resposta
