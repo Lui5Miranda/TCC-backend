@@ -42,7 +42,15 @@ class ProductionConfig(Config):
     DEBUG = False
     LOG_LEVEL = 'WARNING'
     # Em produção, especificar origens exatas
-    CORS_ORIGINS = os.getenv('CORS_ORIGINS', '').split(',') if os.getenv('CORS_ORIGINS') else ["http://localhost:3000"]
+    cors_env = os.getenv('CORS_ORIGINS', '').strip()
+    if cors_env == '*':
+        # Permite todas as origens (não recomendado para produção real)
+        CORS_ORIGINS = ['*']
+    elif cors_env:
+        # Remove espaços extras e filtra strings vazias
+        CORS_ORIGINS = [origin.strip() for origin in cors_env.split(',') if origin.strip()]
+    else:
+        CORS_ORIGINS = ["http://localhost:3000"]
 
 class TestingConfig(Config):
     """Configuração para testes"""
