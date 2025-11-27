@@ -189,6 +189,15 @@ def extract_answers(sorted_bubbles, thresh_image, aligned_image):
     
     logger.info(f"Processando {len(sorted_bubbles)} bolhas em grupos de 5")
     
+    # Primeiro, desenha TODAS as bolhas em cinza (referência)
+    for bubble in sorted_bubbles:
+        (x, y, w, h) = cv2.boundingRect(bubble)
+        centro_x = x + w // 2
+        centro_y = y + h // 2
+        raio = max(w, h) // 2
+        # Círculo cinza fino para todas as bolhas
+        cv2.circle(resultado_visual_img, (centro_x, centro_y), raio, (128, 128, 128), 1)
+    
     for (q, i) in enumerate(np.arange(0, len(sorted_bubbles), 5)):
         cnts_por_questao = contours.sort_contours(sorted_bubbles[i:i + 5])[0]
         
@@ -200,38 +209,39 @@ def extract_answers(sorted_bubbles, thresh_image, aligned_image):
             total = cv2.countNonZero(mask)
             pontuacoes.append(total)
         
-        # Log de debug para as primeiras 3 questões
-        if q < 3:
-            logger.info(f"Questão {q + 1} - Pontuações: {pontuacoes}")
-            logger.info(f"Questão {q + 1} - Alternativas: {[alternativas[j] for j in range(len(pontuacoes))]}")
+        # Log detalhado para todas as questões
+        logger.info(f"Questão {q + 1} - Pontuações: {pontuacoes}")
         
         sorted_scores = sorted(pontuacoes, reverse=True)
+        
+        # REDUZ o threshold de 1.5 para 1.3 para detectar marcas mais fracas
+        confidence_ratio = config.get('confidence_threshold', 1.5)
+        adjusted_threshold = 1.3  # Mais sensível
+        
         if (len(sorted_scores) > 1 and 
-            sorted_scores[0] > (sorted_scores[1] * config['confidence_threshold'])):
+            sorted_scores[0] > (sorted_scores[1] * adjusted_threshold)):
             
             indice_marcado = pontuacoes.index(sorted_scores[0])
             resposta = alternativas[indice_marcado]
             
-            # Log de debug para as primeiras 3 questões
-            if q < 3:
-                logger.info(f"Questão {q + 1} - Resposta detectada: {resposta} (índice {indice_marcado})")
+            logger.info(f"Questão {q + 1} - Resposta detectada: {resposta} (pontuação: {sorted_scores[0]} vs {sorted_scores[1]}, ratio: {sorted_scores[0]/sorted_scores[1]:.2f})")
             
-            # Desenha o círculo na resposta escolhida
+            # Desenha círculo CIANO (azul claro) GROSSO na resposta detectada
             (x, y, w, h) = cv2.boundingRect(cnts_por_questao[indice_marcado])
             centro_x = x + w // 2
             centro_y = y + h // 2
-            raio = w // 2
-            cv2.circle(resultado_visual_img, (centro_x, centro_y), raio, (255, 255, 0), 2)
+            raio = max(w, h) // 2
+            # Cor CIANO (0, 255, 255) em BGR = azul claro brilhante
+            cv2.circle(resultado_visual_img, (centro_x, centro_y), raio, (0, 255, 255), 3)
         else:
-            # CORREÇÃO CRÍTICA: Registra questão mesmo se não marcada
             resposta = "NÃO MARCADA"
-            if q < 3:
-                logger.info(f"Questão {q + 1} - Resposta não detectada (confiança baixa) - Registrando como NÃO MARCADA")
+            logger.info(f"Questão {q + 1} - Não detectada (confiança baixa: {sorted_scores[0]} vs {sorted_scores[1]}, ratio: {sorted_scores[0]/sorted_scores[1]:.2f if sorted_scores[1] > 0 else 'inf'})")
         
-        # CORREÇÃO CRÍTICA: SEMPRE registra a resposta, mesmo se não marcada
+        # SEMPRE registra a resposta na ordem correta
         respostas_marcadas[q + 1] = resposta
     
-    logger.info(f"Respostas extraídas: {dict(list(respostas_marcadas.items())[:5])}")
+    logger.info(f"Total de respostas registradas: {len(respostas_marcadas)}")
+    logger.info(f"Amostra: {dict(list(respostas_marcadas.items())[:10])}")
     return respostas_marcadas, resultado_visual_img
 
 def process_gabarito_image(image, num_questions=None):
