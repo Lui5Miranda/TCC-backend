@@ -204,18 +204,32 @@ def extract_answers(sorted_bubbles, thresh_image, aligned_image):
         logger.info(f"Questão {q + 1} - Pontuações: {pontuacoes}")
         
         sorted_scores = sorted(pontuacoes, reverse=True)
+        mean_score = np.mean(pontuacoes)
         
-        # REDUZ o threshold de 1.5 para 1.3 para detectar marcas mais fracas
-        confidence_ratio = config.get('confidence_threshold', 1.5)
-        adjusted_threshold = 1.3  # Mais sensível
+        # MELHORIAS NA DETECÇÃO:
+        # 1. Threshold mais baixo: 1.15 (era 1.3)
+        # 2. Threshold adaptativo baseado na média
+        # 3. Verifica pontuação mínima absoluta
         
-        if (len(sorted_scores) > 1 and 
-            sorted_scores[0] > (sorted_scores[1] * adjusted_threshold)):
-            
+        base_threshold = 1.15  # Mais sensível que antes (era 1.3)
+        min_absolute_score = mean_score * 1.5  # Deve ser 50% acima da média
+        
+        # Calcula se a maior pontuação se destaca
+        is_confident = False
+        ratio = 0
+        
+        if len(sorted_scores) > 1 and sorted_scores[1] > 0:
+            ratio = sorted_scores[0] / sorted_scores[1]
+            # Detecta se:
+            # 1. Ratio é maior que threshold E
+            # 2. Pontuação absoluta é significativa (acima da média)
+            is_confident = (ratio > base_threshold and sorted_scores[0] > min_absolute_score)
+        
+        if is_confident:
             indice_marcado = pontuacoes.index(sorted_scores[0])
             resposta = alternativas[indice_marcado]
             
-            logger.info(f"Questão {q + 1} - Resposta detectada: {resposta} (pontuação: {sorted_scores[0]} vs {sorted_scores[1]}, ratio: {sorted_scores[0]/sorted_scores[1]:.2f})")
+            logger.info(f"Questão {q + 1} - ✓ DETECTADA: {resposta} | Pontuação: {sorted_scores[0]} vs {sorted_scores[1]} | Ratio: {ratio:.2f} | Média: {mean_score:.1f}")
             
             # Desenha TODAS as bolhas da questão
             for (j, c) in enumerate(cnts_por_questao):
@@ -232,8 +246,7 @@ def extract_answers(sorted_bubbles, thresh_image, aligned_image):
                     cv2.circle(resultado_visual_img, (centro_x, centro_y), raio, (0, 255, 0), 2)
         else:
             resposta = "NÃO MARCADA"
-            ratio = sorted_scores[0]/sorted_scores[1] if sorted_scores[1] > 0 else float('inf')
-            logger.info(f"Questão {q + 1} - Não detectada (confiança baixa: {sorted_scores[0]} vs {sorted_scores[1]}, ratio: {ratio:.2f})")
+            logger.info(f"Questão {q + 1} - ✗ NÃO detectada | Pontuação: {sorted_scores[0]} vs {sorted_scores[1]} | Ratio: {ratio:.2f} | Média: {mean_score:.1f}")
             
             # Desenha TODAS as bolhas em VERDE (nenhuma foi detectada como marcada)
             for c in cnts_por_questao:
