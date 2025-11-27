@@ -211,7 +211,6 @@ def extract_answers(sorted_bubbles, thresh_image, aligned_image):
             
             indice_marcado = pontuacoes.index(sorted_scores[0])
             resposta = alternativas[indice_marcado]
-            respostas_marcadas[q + 1] = resposta
             
             # Log de debug para as primeiras 3 questões
             if q < 3:
@@ -224,9 +223,13 @@ def extract_answers(sorted_bubbles, thresh_image, aligned_image):
             raio = w // 2
             cv2.circle(resultado_visual_img, (centro_x, centro_y), raio, (255, 255, 0), 2)
         else:
-            respostas_marcadas[q + 1] = "DUVIDA / NULA"
+            # CORREÇÃO CRÍTICA: Registra questão mesmo se não marcada
+            resposta = "NÃO MARCADA"
             if q < 3:
-                logger.info(f"Questão {q + 1} - Resposta não detectada (confiança baixa)")
+                logger.info(f"Questão {q + 1} - Resposta não detectada (confiança baixa) - Registrando como NÃO MARCADA")
+        
+        # CORREÇÃO CRÍTICA: SEMPRE registra a resposta, mesmo se não marcada
+        respostas_marcadas[q + 1] = resposta
     
     logger.info(f"Respostas extraídas: {dict(list(respostas_marcadas.items())[:5])}")
     return respostas_marcadas, resultado_visual_img
